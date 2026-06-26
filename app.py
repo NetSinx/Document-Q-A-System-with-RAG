@@ -1,8 +1,5 @@
 from init_workflow import init_workflow
 import os
-import bs4
-import requests
-from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from functools import lru_cache
@@ -15,30 +12,33 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from langchain.messages import HumanMessage
 from langgraph.graph import MessagesState
+from langchain_docling.loader import DoclingLoader
+from langchain_community.vectorstores.utils import filter_complex_metadata
 
 load_dotenv()
 
-def load_web_page(url: str, bs_kwargs: dict | None = None) -> list[Document]:
-    response = requests.get(url, timeout=20)
-    response.raise_for_status()
-    soup = bs4.BeautifulSoup(response.text, "html.parser", **(bs_kwargs or {}))
-    return [Document(page_content=soup.get_text(), metadata={"source": url})]
+def load_document(file_path: str):
+    loader = DoclingLoader(file_path=file_path)
+    documents = loader.load()
+    return documents
 
-urls = [
-    "https://lilianweng.github.io/posts/2024-11-28-reward-hacking/",
-    "https://lilianweng.github.io/posts/2024-07-07-hallucination/",
-    "https://lilianweng.github.io/posts/2024-04-12-diffusion-video/",
-]
+# urls = [
+#     "https://lilianweng.github.io/posts/2024-11-28-reward-hacking/",
+#     "https://lilianweng.github.io/posts/2024-07-07-hallucination/",
+#     "https://lilianweng.github.io/posts/2024-04-12-diffusion-video/",
+# ]
+docs = load_document("https://arxiv.org/pdf/2408.09869")
 
-docs = [load_web_page(url) for url in urls]
-docs_list = [item for sublist in docs for item in sublist]
+# docs = [load_document(url) for url in urls]
+# docs_list = [item for sublist in docs for item in sublist]
 
 text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
     chunk_size=1000,
     chunk_overlap=200,
 )
 
-doc_splits = text_splitter.split_documents(docs_list)
+doc_splits = text_splitter.split_documents(docs)
+doc_splits = filter_complex_metadata(doc_splits)
 
 @lru_cache(maxsize=1)
 def _get_retriever():
@@ -52,15 +52,14 @@ def _get_retriever():
     return vectorstore.as_retriever()
 
 @tool
-def retrieve_blog_posts(query: str) -> str:
-    """Cari dan kembalikan informasi tentang postingan blog Lilian Weng."""
+def retrieve_information(query: str) -> str:
+    """Cari dan kembalikan informasi mengenai pertanyaan user berdasarkan dokumen yang tersedia. Jika tidak ditemukan informasinya, jangan memalsukannya, tetapi beritahu bahwa informasi tersebut tidak ditemukan."""
     retriever = _get_retriever()
     retrieved_docs = retriever.invoke(query)
     return "\n\n".join([doc.page_content for doc in retrieved_docs])
 
 
-retriever_tool = retrieve_blog_posts
-retriever_tool.invoke({"query": "types of reward hacking"})
+retriever_tool = retrieve_information
 
 response_model = init_chat_model("groq:llama-3.1-8b-instant", temperature=0)
 
@@ -113,7 +112,6 @@ REWRITE_PROMPT = (
     "Formulasikan pertanyaan yang lebih baik:"
 )
 
-
 def rewrite_question(state: MessagesState):
     """Tulis ulang pertanyaan asli user"""
     question = state["messages"][0].content
@@ -150,6 +148,7 @@ def run_agentic_rag(graph, query) -> None:
         },
         version="v3",
     )
+
     for message in stream.messages:
         for token in message.text:
             print(token, end="", flush=True)
@@ -157,4 +156,4 @@ def run_agentic_rag(graph, query) -> None:
 if __name__ == "__main__":
     graph = init_workflow(generate_query_or_respond, retriever_tool, rewrite_question, generate_answer, grade_documents)
     
-    run_agentic_rag(graph, "What does Lilian Weng say about types of reward hacking?")
+    run_agentic_rag(graph, "apa itu github?")
