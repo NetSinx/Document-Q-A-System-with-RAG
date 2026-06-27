@@ -9,4 +9,12 @@ sentence-transformers
 langgraph
 python-dotenv
 langchain-community
-IPython
+litestar
+pytest
+pytest-asyncio
+anyio
+pytest-asyncio
+pytest-tornasync
+pytest-trio
+pytest-twisted
+twisted
