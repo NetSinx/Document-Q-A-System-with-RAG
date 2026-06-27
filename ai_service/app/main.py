@@ -23,6 +23,8 @@ from collections.abc import AsyncGenerator
 from litestar.serialization import encode_json
 from litestar.response import Stream
 from langchain_core.runnables import RunnableConfig
+import traceback
+from litestar.exceptions import HTTPException
 
 load_dotenv()
 
@@ -44,16 +46,16 @@ async def run_agentic_rag(graph, query) -> AsyncGenerator[bytes, None]:
             },
             stream_mode="messages",
         ):
-            if msg.content and isinstance(msg.content, str):
-                yield encode_json({"message": msg.content}) + b"\n"
-            elif msg.content and isinstance(msg.content, list):
-                text = "".join(c.get("text", "") for c in msg.content if isinstance(c, dict) and "text" in c)
-                if text:
-                    yield encode_json({"message": text}) + b"\n"
+            if msg.__class__.__name__ == "AIMessageChunk":
+                if msg.content and isinstance(msg.content, str):
+                    yield encode_json({"message": msg.content}) + b"\n"
+                elif msg.content and isinstance(msg.content, list):
+                    text = "".join(c.get("text", "") for c in msg.content if isinstance(c, dict) and "text" in c)
+                    if text:
+                        yield encode_json({"message": text}) + b"\n"
     except Exception as e:
-        import traceback
         traceback.print_exc()
-        yield b'{"error": "Server error occurred"}\n'
+        raise HTTPException(status_code=500, detail=str(e))
 
 @post(path="/api/chat")
 async def chat(data: MultipartBody[FormInput]) -> Stream:
