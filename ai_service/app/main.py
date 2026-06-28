@@ -23,8 +23,6 @@ from collections.abc import AsyncGenerator
 from litestar.serialization import encode_json
 from litestar.response import Stream
 from langchain_core.runnables import RunnableConfig
-import traceback
-from litestar.exceptions import HTTPException
 
 load_dotenv()
 
@@ -45,17 +43,12 @@ async def run_agentic_rag(graph, query) -> AsyncGenerator[bytes, None]:
                 ]
             },
             stream_mode="messages",
+            version=2
         ):
             if msg.__class__.__name__ == "AIMessageChunk":
-                if msg.content and isinstance(msg.content, str):
-                    yield encode_json({"message": msg.content}) + b"\n"
-                elif msg.content and isinstance(msg.content, list):
-                    text = "".join(c.get("text", "") for c in msg.content if isinstance(c, dict) and "text" in c)
-                    if text:
-                        yield encode_json({"message": text}) + b"\n"
+                yield encode_json({"message": msg.content}) + b"\n"
     except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        yield encode_json({"error": str(e)}) + b"\n"
 
 @post(path="/api/chat")
 async def chat(data: MultipartBody[FormInput]) -> Stream:
@@ -69,8 +62,12 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
         temp_file_path = temp_file.name
 
     try:
-        loader = DoclingLoader(file_path=temp_file_path)
-        documents = loader.load()
+        async def load_document(file_path: str):
+            loader = DoclingLoader(file_path=file_path)
+            documents = loader.load()
+            return documents
+
+        documents = await load_document(temp_file_path)
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
             chunk_size=1000,
@@ -81,7 +78,7 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
         doc_splits = filter_complex_metadata(doc_splits)
 
         @lru_cache(maxsize=1)
-        def _get_retriever():
+        async def _get_retriever():
             vectorstore = Chroma.from_documents(
                 documents=doc_splits,
                 embedding=HuggingFaceEmbeddings(
@@ -92,10 +89,10 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
             return vectorstore.as_retriever()
     
         @tool
-        def retrieve_information(query: str) -> str:
+        async def retrieve_information(query: str) -> str:
             """Mencari informasi yang relevan dari dokumen menggunakan query teks."""
-            retriever = _get_retriever()
-            retrieved_docs = retriever.invoke(query)
+            retriever = await _get_retriever()
+            retrieved_docs = await retriever.ainvoke(query)
             return "\n\n".join([doc.page_content for doc in retrieved_docs])
 
         retriever_tool = retrieve_information
