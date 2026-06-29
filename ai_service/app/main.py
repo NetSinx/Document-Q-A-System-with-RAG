@@ -3,7 +3,6 @@ import os
 import tempfile
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
-from functools import lru_cache
 from langchain.tools import tool
 from langgraph.graph import MessagesState
 from langchain.chat_models import init_chat_model
@@ -23,6 +22,9 @@ from collections.abc import AsyncGenerator
 from litestar.serialization import encode_json
 from litestar.response import Stream
 from langchain_core.runnables import RunnableConfig
+import traceback
+import asyncio
+from litestar.config.cors import CORSConfig
 
 load_dotenv()
 
@@ -31,43 +33,17 @@ class FormInput:
     query: str = Field(..., min_length=1, description="The question to ask")
     file: UploadFile = Field(..., description="The document to upload")
 
-async def run_agentic_rag(graph, query) -> AsyncGenerator[bytes, None]:
+async def run_agentic_rag(query: str, temp_file_path: str) -> AsyncGenerator[bytes, None]:
     try:
-        async for msg, metadata in graph.astream(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": query,
-                    }
-                ]
-            },
-            stream_mode="messages",
-            version=2
-        ):
-            if msg.__class__.__name__ == "AIMessageChunk":
-                yield encode_json({"message": msg.content}) + b"\n"
-    except Exception as e:
-        yield encode_json({"error": str(e)}) + b"\n"
+        yield encode_json({"status": "loading document"}) + b"\n"
+        
+        def load_doc():
+            loader = DoclingLoader(file_path=temp_file_path)
+            return loader.load()
+            
+        documents = await asyncio.to_thread(load_doc)
 
-@post(path="/api/chat")
-async def chat(data: MultipartBody[FormInput]) -> Stream:
-    document = await data.file.read()
-    filename = data.file.filename
-
-    _, file_extension = os.path.splitext(filename)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-        temp_file.write(document)
-        temp_file_path = temp_file.name
-
-    try:
-        async def load_document(file_path: str):
-            loader = DoclingLoader(file_path=file_path)
-            documents = loader.load()
-            return documents
-
-        documents = await load_document(temp_file_path)
+        yield encode_json({"status": "embedding document"}) + b"\n"
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
             chunk_size=1000,
@@ -77,31 +53,30 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
         doc_splits = text_splitter.split_documents(documents)
         doc_splits = filter_complex_metadata(doc_splits)
 
-        @lru_cache(maxsize=1)
-        async def _get_retriever():
-            vectorstore = Chroma.from_documents(
+        def create_vectorstore():
+            return Chroma.from_documents(
                 documents=doc_splits,
                 embedding=HuggingFaceEmbeddings(
                     model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
                     encode_kwargs={"normalize_embeddings": True},
                 ),
             )
-            return vectorstore.as_retriever()
-    
+        vectorstore = await asyncio.to_thread(create_vectorstore)
+        retriever = vectorstore.as_retriever()
+        
         @tool
-        async def retrieve_information(query: str) -> str:
+        async def retrieve_information_by_document(query: str) -> str:
             """Mencari informasi yang relevan dari dokumen menggunakan query teks."""
-            retriever = await _get_retriever()
             retrieved_docs = await retriever.ainvoke(query)
             return "\n\n".join([doc.page_content for doc in retrieved_docs])
 
-        retriever_tool = retrieve_information
-
-        response_model = init_chat_model("groq:llama-3.1-8b-instant", temperature=0)
+        retriever_tool = retrieve_information_by_document
+        response_model = init_chat_model("groq:qwen/qwen3-32b", temperature=0)
 
         async def generate_query_or_respond(state: MessagesState, config: RunnableConfig):
-            """Panggil model untuk generate sebuah respon berdasarkan state saat ini. Diberikan pertanyaan, model akan memutuskan untuk menggunakan retriever tool, atau sekadar menjawab pertanyaan user."""
-            response = await response_model.bind_tools([retriever_tool]).ainvoke(state["messages"], config)
+            """Panggil model untuk generate sebuah respon berdasarkan state saat ini."""
+            messages = state["messages"]
+            response = await response_model.bind_tools([retriever_tool]).ainvoke(messages, config)
             return {"messages": [response]}
 
         GRADE_PROMPT = (
@@ -116,12 +91,11 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
 
         class GradeDocuments(BaseModel):
             """Tingkatkan dokumen menggunakan sebuah skor biner untuk mengecek relevansi."""
-
             binary_score: str = Field(
                 description="Relevance score: 'yes' if relevant, or 'no' if not relevant"
             )
 
-        grader_model = init_chat_model("groq:llama-3.1-8b-instant", temperature=0)
+        grader_model = init_chat_model("groq:qwen/qwen3-32b", temperature=0)
 
         async def grade_documents(
             state: MessagesState,
@@ -174,9 +148,47 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
        
         graph = init_workflow(generate_query_or_respond, retriever_tool, rewrite_question, generate_answer, grade_documents)
         
-        return Stream(run_agentic_rag(graph, data.query))
+        yield encode_json({"status": "thinking"}) + b"\n"
+
+        async for mode, data in graph.astream(
+            {
+                "messages": [{"role": "user", "content": query}]
+            },
+            stream_mode=["messages", "updates"],
+        ):
+            if mode == "messages":
+                msg, metadata = data
+                if msg.__class__.__name__ == "AIMessageChunk":
+                    if msg.content and isinstance(msg.content, str):
+                        yield encode_json({"message": msg.content}) + b"\n"
+                    elif msg.content and isinstance(msg.content, list):
+                        text = "".join(c.get("text", "") for c in msg.content if isinstance(c, dict) and "text" in c)
+                        if text:
+                            yield encode_json({"message": text}) + b"\n"
+            elif mode == "updates":
+                node_name = list(data.keys())[0]
+                yield encode_json({"status": f"executing {node_name}"}) + b"\n"
+
+    except Exception as e:
+        traceback.print_exc()
+        yield encode_json({"error": str(e)}) + b"\n"
     finally:
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
-app = Litestar(route_handlers=[chat], debug=True)
+@post(path="/api/chat")
+async def chat(data: MultipartBody[FormInput]) -> Stream:
+    document = await data.file.read()
+    filename = data.file.filename
+
+    _, file_extension = os.path.splitext(filename)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+        temp_file.write(document)
+        temp_file_path = temp_file.name
+
+    return Stream(run_agentic_rag(data.query, temp_file_path))
+
+cors_config = CORSConfig(allow_origins=["http://localhost:5173"])
+
+app = Litestar(route_handlers=[chat], cors_config=cors_config, debug=True)
