@@ -5,6 +5,7 @@ import './App.css'
 
 function App() {
   const [query, setQuery] = useState('');
+  const [link, setLink] = useState('');
   const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -23,13 +24,19 @@ function App() {
   const handleFileChange = (e: any) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
+      e.target.value = '';
     }
+  };
+
+  const handleFileRemove = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setSelectedFile(null);
   };
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
-    if (!selectedFile) {
-      alert('Silakan pilih file terlebih dahulu!');
+    if (!selectedFile && !link.trim()) {
+      alert('Silakan pilih file atau masukkan URL terlebih dahulu!');
       return;
     }
     if (!query.trim()) {
@@ -42,8 +49,11 @@ function App() {
     setStatus('Mengirim permintaan...');
 
     const formData = new FormData();
+    formData.append('query', query.trim());
     formData.append('file', selectedFile); 
-    formData.append('query', query);
+    formData.append('link', link.trim());
+
+    console.log(formData.get('file'));
 
     try {
       const response = await fetch('http://localhost:8000/api/chat', {
@@ -135,7 +145,7 @@ function App() {
         <div className="app-container">
           <div className="header-section">
             <h1 className="title">Analisis Dokumen</h1>
-            <p className="subtitle">Upload dokumen dan berikan pertanyaan untuk mengekstrak informasi menggunakan AI.</p>
+            <p className="subtitle">Upload dokumen atau masukkan URL dan berikan pertanyaan untuk mengekstrak informasi menggunakan AI.</p>
           </div>
           
           <form onSubmit={handleSubmit} className="action-form">
@@ -157,19 +167,41 @@ function App() {
                   <span className="file-desc">{selectedFile ? 'Siap untuk analisis' : 'PDF, TXT, atau DOCX hingga 10MB'}</span>
                 </div>
                 {!selectedFile && <div className="btn-browse">Browse</div>}
+                {selectedFile && (
+                  <button onClick={handleFileRemove} className="btn-remove-file" title="Hapus File">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                      <line x1="10" y1="11" x2="10" y2="17"></line>
+                      <line x1="14" y1="11" x2="14" y2="17"></line>
+                    </svg>
+                  </button>
+                )}
               </label>
             </div>
-
+            <p style={{textAlign: 'center'}}>Atau</p>
+          
             <div className="input-group">
+              <input
+                type="text"
+                value={link}
+                onChange={(e) => setLink(e.target.value)}
+                placeholder="Masukkan URL dokumen..."
+                className="text-input"
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="input-group" style={{marginTop: '30px'}}>
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Ajukan pertanyaan spesifik untuk dokumen ini..."
+                placeholder="Ajukan pertanyaan spesifik untuk dokumen..."
                 className="text-input"
                 disabled={isLoading}
               />
-              <button type="submit" disabled={isLoading || !query.trim() || !selectedFile} className="submit-button">
+              <button type="submit" disabled={isLoading || !query.trim() || (!selectedFile && link == "")} className="submit-button">
                 {isLoading ? (
                   <span className="loading-spinner"></span>
                 ) : (

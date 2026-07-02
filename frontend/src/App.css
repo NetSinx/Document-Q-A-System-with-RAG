@@ -106,7 +106,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 48px 20px;
+  padding: 40px 20px;
 }
 
 .app-container {
@@ -214,6 +214,15 @@ body {
 .file-desc {
   font-size: 0.85rem;
   color: var(--text-secondary);
+}
+
+.btn-remove-file {
+  background-color: var(--primary-color);
+  color: var(--primary-text);
+  border-radius: 6px;
+  padding: 6px 14px;
+  border: 0;
+  cursor: pointer;
 }
 
 .btn-browse {

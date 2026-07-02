@@ -199,7 +199,7 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
         traceback.print_exc()
         yield encode_json({"error": str(e)}) + b"\n"
     finally:
-        if os.path.exists(temp_file_path):
+        if temp_file_path is not None and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
 @post(path="/api/chat")
@@ -217,11 +217,17 @@ async def chat(data: MultipartBody[FormInput]) -> Stream:
                 detail=f"Format file tidak didukung. File harus berupa .txt, .pdf, atau .docx", 
                 status_code=400
             )
-        
+
         filename_lower = filename.lower()
         if not any(filename_lower.endswith(ext) for ext in ALLOWED_EXTENSIONS):
             raise HTTPException(
                 detail="Ekstensi file tidak valid. Gunakan .txt atau .docx",
+                status_code=400
+            )
+
+        if len(document) > 10 * 1024 * 1024:
+            raise HTTPException(
+                detail="Ukuran file maksimal adalah 10MB",
                 status_code=400
             )
 
