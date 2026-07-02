@@ -16,6 +16,9 @@ from langchain_docling.loader import DoclingLoader
 from langchain_community.vectorstores.utils import filter_complex_metadata
 from dataclasses import dataclass
 import hashlib
+import requests
+import bs4
+from langchain_core.documents import Document
 from litestar import Litestar, post
 from litestar.datastructures import UploadFile
 from litestar.params import MultipartBody
@@ -25,17 +28,22 @@ from litestar.response import Stream
 from langchain_core.runnables import RunnableConfig
 import traceback
 import asyncio
-from functools import lru_cache
 from litestar.config.cors import CORSConfig
+from litestar.exceptions import HTTPException
 
 load_dotenv()
 
 @dataclass
 class FormInput:
-    query: str = Field(..., min_length=1, description="The question to ask")
-    file: UploadFile = Field(..., description="The document to upload")
+    query: str
+    file: UploadFile | None
+    link: str | None
 
-async def run_agentic_rag(query: str, temp_file_path: str, filename: str) -> AsyncGenerator[bytes, None]:
+async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str | None, link: str | list[str] | None) -> AsyncGenerator[bytes, None]:
+    if temp_file_path is None and filename is None and link is None or link == "":
+        yield encode_json({"status": "No Document Provided", "error": "Please provide a document or only one between file or link."}) + b"\n"
+        return
+
     try:
         yield encode_json({"status": "Loading Document..."}) + b"\n"
 
@@ -55,17 +63,30 @@ async def run_agentic_rag(query: str, temp_file_path: str, filename: str) -> Asy
         yield encode_json({"status": "Embedding Document..."}) + b"\n"
 
         def load_doc():
-            file_id = hashlib.sha256(filename.encode()).hexdigest()
-            existing_docs = vectorstore.get(where={"source_file_id": file_id})
-            if existing_docs["ids"]:
-                return
+            if temp_file_path is not None and filename is not None and link is None:
+                file_id = hashlib.sha256(filename.encode()).hexdigest()
+                existing_docs = vectorstore.get(where={"source_file_id": file_id})
+                if existing_docs["ids"]:
+                    return
 
-            loader = DoclingLoader(file_path=temp_file_path)
-            documents = loader.load()
+                loader = DoclingLoader(file_path=temp_file_path)
+                documents = loader.load()
 
-            for doc in documents:
-                doc.metadata["source_file_id"] = file_id
-
+                for doc in documents:
+                    doc.metadata["source_file_id"] = file_id
+            elif link is not None and temp_file_path is None and filename is None:
+                def load_url(link: str | list[str] | None = None, bs_kwargs: dict | None = None):
+                    response = requests.get(link, timeout=20)
+                    response.raise_for_status()
+                    soup = bs4.BeautifulSoup(response.text, "html.parser", **(bs_kwargs or {}))
+                    return [Document(page_content=soup.get_text(), metadata={"source": link})]
+                
+                if link is list[str]:
+                    docs_list = [load_url(url) for url in link]
+                    documents = [item for sublist in docs_list for item in sublist]
+                else:
+                    documents = load_url(link)
+            
             text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
                 chunk_size=1000,
                 chunk_overlap=200,
@@ -75,7 +96,7 @@ async def run_agentic_rag(query: str, temp_file_path: str, filename: str) -> Asy
             doc_splits = filter_complex_metadata(doc_splits)
 
             vectorstore.add_documents(doc_splits)
-        
+
         await asyncio.to_thread(load_doc)
 
         @tool
@@ -183,16 +204,39 @@ async def run_agentic_rag(query: str, temp_file_path: str, filename: str) -> Asy
 
 @post(path="/api/chat")
 async def chat(data: MultipartBody[FormInput]) -> Stream:
-    document = await data.file.read()
-    filename = data.file.filename
+    link = data.link
 
-    _, file_extension = os.path.splitext(filename)
+    if data.file is not None and (link is None or link == ""):
+        document = await data.file.read()
+        filename = data.file.filename
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-        temp_file.write(document)
-        temp_file_path = temp_file.name
+        ALLOWED_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"]
+        ALLOWED_EXTENSIONS = [".txt", ".docx", ".pdf"]
+        if data.file.content_type not in ALLOWED_TYPES:
+            raise HTTPException(
+                detail=f"Format file tidak didukung. File harus berupa .txt, .pdf, atau .docx", 
+                status_code=400
+            )
+        
+        filename_lower = filename.lower()
+        if not any(filename_lower.endswith(ext) for ext in ALLOWED_EXTENSIONS):
+            raise HTTPException(
+                detail="Ekstensi file tidak valid. Gunakan .txt atau .docx",
+                status_code=400
+            )
 
-    return Stream(run_agentic_rag(data.query, temp_file_path, filename))
+        _, file_extension = os.path.splitext(filename)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            temp_file.write(document)
+            temp_file_path = temp_file.name
+        
+        return Stream(run_agentic_rag(data.query, temp_file_path, filename, None))
+    elif (link is not None or link != "") and data.file is None:
+        return Stream(run_agentic_rag(data.query, None, None, link))
+    else:
+        return Stream(run_agentic_rag(data.query, None, None, None))
+
 
 cors_config = CORSConfig(allow_origins=["*"])
 
