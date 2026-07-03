@@ -3,6 +3,7 @@
   --container-bg: #ffffff;
   --text-primary: #09090b;
   --text-secondary: #71717a;
+  --text-note: #2C3E50;
   --border-color: #e4e4e7;
   --border-hover: #d4d4d8;
   --primary-color: #18181b;
@@ -18,6 +19,7 @@
   --container-bg: #18181b;
   --text-primary: #fafafa;
   --text-secondary: #a1a1aa;
+  --text-note: #fff023;
   --border-color: #27272a;
   --border-hover: #3f3f46;
   --primary-color: #fafafa;
@@ -106,7 +108,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 40px 20px;
+  padding: 20px 20px;
 }
 
 .app-container {
@@ -143,7 +145,7 @@ body {
 .action-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 10px;
 }
 
 .file-upload-card {
@@ -214,6 +216,11 @@ body {
 .file-desc {
   font-size: 0.85rem;
   color: var(--text-secondary);
+}
+
+.note-input-url {
+  color: var(--text-note);
+  font-size: 12px;
 }
 
 .btn-remove-file {
@@ -308,8 +315,7 @@ body {
 .response-container {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 16px;
+  gap: 10px;
 }
 
 .status-badge {

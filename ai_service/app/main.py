@@ -77,10 +77,16 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
                 for doc in documents:
                     doc.metadata["source_file_id"] = file_id
             elif link is not None and temp_file_path is None and filename is None:
+                file_id = hashlib.sha256(link.encode()).hexdigest()
+                existing_docs = vectorstore.get(where={"source_file_id": file_id})
+                if existing_docs["ids"]:
+                    return
+
                 def load_url(link: str | list[str] | None = None, bs_kwargs: dict | None = None):
                     response = requests.get(link, timeout=20)
                     response.raise_for_status()
                     soup = bs4.BeautifulSoup(response.text, "html.parser", **(bs_kwargs or {}))
+                    print("Documents: ", soup.get_text())
                     return [Document(page_content=soup.get_text(), metadata={"source": link})]
                 
                 if link is list[str]:
@@ -88,6 +94,9 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
                     documents = [item for sublist in docs_list for item in sublist]
                 else:
                     documents = load_url(link)
+                
+                for doc in documents:
+                    doc.metadata["source_file_id"] = file_id
             
             text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
                 chunk_size=1000,

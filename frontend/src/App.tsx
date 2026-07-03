@@ -88,16 +88,19 @@ function App() {
 
             if (parsedData.status) {
               setStatus(parsedData.status);
-            } 
-            else if (parsedData.message) {
-              setStatus(parsedData.status)
+            } else if (parsedData.status || parsedData.message) {
+              setStatus(parsedData.status);
               setAnswer((prev) => prev + parsedData.message);
-            }
-            else if (parsedData.error) {
-              setStatus('error');
-              setAnswer('Terjadi kesalahan')
+            } else if (parsedData.status && parsedData.error) {
+              setStatus(parsedData.status);
+              setAnswer(parsedData.error)
+            } else if (String(parsedData.error).includes("Name or service not known")) {
+              setStatus("Error!")
+              setAnswer("URL yang dimasukkan tidak valid.")
             }
           } catch (err) {
+            setStatus("Error!")
+            setAnswer('Terjadi kesalahan pada server.');
             console.error('Gagal parse baris JSON:', err);
           }
         }
@@ -186,7 +189,7 @@ function App() {
           
             <div className="input-group">
               <input
-                type="text"
+                type="url"
                 value={link}
                 onChange={(e) => setLink(e.target.value)}
                 placeholder="Masukkan URL dokumen..."
@@ -194,6 +197,7 @@ function App() {
                 disabled={isLoading}
               />
             </div>
+            <p className='note-input-url'>Note: Jika URL yang dimasukkan lebih dari satu gunakan tanda koma (,). (Contoh: https:example.com/, https://example.co.id/)</p>
 
             <div className="input-group" style={{marginTop: '30px'}}>
               <input
