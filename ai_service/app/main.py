@@ -208,8 +208,6 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
 async def chat(data: FormInput = Body(media_type=RequestEncodingType.MULTI_PART)) -> Stream:
     link = data.link
 
-    print("data.file: ", type(data.file))
-
     if data.file is not None and (link is None or link == ""):
         document = await data.file.read()
         filename = data.file.filename
