@@ -118,7 +118,7 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
             return "\n\n".join([doc.page_content for doc in retrieved_docs])
 
         retriever_tool = retrieve_information_by_document
-        response_model = init_chat_model("groq:qwen/qwen3-32b", temperature=0)
+        response_model = init_chat_model("groq:qwen/qwen3-32b", temperature=0, max_tokens=4096)
 
         async def generate_query_or_respond(state: MessagesState, config: RunnableConfig):
             """Panggil model untuk generate sebuah respon berdasarkan state saat ini."""
