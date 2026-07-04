@@ -32,6 +32,7 @@ import traceback
 import asyncio
 from litestar.config.cors import CORSConfig
 from litestar.exceptions import HTTPException
+import ast
 
 load_dotenv()
 
@@ -43,7 +44,7 @@ class FormInput:
 
 async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str | None, link: str | list[str] | None) -> AsyncGenerator[bytes, None]:
     if temp_file_path is None and filename is None and link is None or link == "":
-        yield encode_json({"status": "No Document Provided", "error": "Please provide a document or only one between file or link."}) + b"\n"
+        yield encode_json({"status": "No Document Provided", "message": "Upload dokumen atau masukkan link tidak boleh keduanya."}) + b"\n"
         return
 
     try:
@@ -77,7 +78,10 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
                 for doc in documents:
                     doc.metadata["source_file_id"] = file_id
             elif link is not None and temp_file_path is None and filename is None:
-                file_id = hashlib.sha256(link.encode()).hexdigest()
+                if isinstance(link, list) and all(isinstance(l, str) for l in link):
+                    file_id = hashlib.sha256(str(link).encode()).hexdigest()
+                else:
+                    file_id = hashlib.sha256(link.encode()).hexdigest()
                 existing_docs = vectorstore.get(where={"source_file_id": file_id})
                 if existing_docs["ids"]:
                     return
@@ -86,10 +90,9 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
                     response = requests.get(link, timeout=20)
                     response.raise_for_status()
                     soup = bs4.BeautifulSoup(response.text, "html.parser", **(bs_kwargs or {}))
-                    print("Documents: ", soup.get_text())
                     return [Document(page_content=soup.get_text(), metadata={"source": link})]
                 
-                if link is list[str]:
+                if isinstance(link, list) and all(isinstance(l, str) for l in link):
                     docs_list = [load_url(url) for url in link]
                     documents = [item for sublist in docs_list for item in sublist]
                 else:
@@ -118,7 +121,7 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
             return "\n\n".join([doc.page_content for doc in retrieved_docs])
 
         retriever_tool = retrieve_information_by_document
-        response_model = init_chat_model("groq:qwen/qwen3-32b", temperature=0, max_tokens=4096)
+        response_model = init_chat_model("groq:qwen/qwen3-32b", temperature=0, max_tokens=2048)
 
         async def generate_query_or_respond(state: MessagesState, config: RunnableConfig):
             """Panggil model untuk generate sebuah respon berdasarkan state saat ini."""
@@ -215,9 +218,9 @@ async def run_agentic_rag(query: str, temp_file_path: str | None, filename: str 
 
 @post(path="/api/chat")
 async def chat(data: FormInput = Body(media_type=RequestEncodingType.MULTI_PART)) -> Stream:
-    link = data.link
+    link = ast.literal_eval(data.link)
 
-    if data.file is not None and (link is None or link == ""):
+    if data.file is not None and (link is None or link == "" or link == []):
         document = await data.file.read()
         filename = data.file.filename
 
@@ -249,7 +252,7 @@ async def chat(data: FormInput = Body(media_type=RequestEncodingType.MULTI_PART)
             temp_file_path = temp_file.name
         
         return Stream(run_agentic_rag(data.query, temp_file_path, filename, None))
-    elif (link is not None or link != "") and data.file is None:
+    elif (link is not None or link != "" or link != []) and data.file is None:
         return Stream(run_agentic_rag(data.query, None, None, link))
     else:
         return Stream(run_agentic_rag(data.query, None, None, None))

@@ -7,6 +7,7 @@ import './App.css'
 function App() {
   const [query, setQuery] = useState('');
   const [link, setLink] = useState('');
+  const [arrayLink, setArrayLink] = useState<string[]>([]);
   const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | undefined>(undefined);
@@ -34,6 +35,12 @@ function App() {
     setSelectedFile(null);
   };
 
+  useEffect(() => {
+    if (link.includes(",") && link.split(",").length > 1) {
+      setArrayLink(link.split(","));
+    }
+  }, [link])
+
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     setTimeout(() => {
@@ -47,11 +54,12 @@ function App() {
       alert('Silakan pilih file atau masukkan URL terlebih dahulu!');
       return;
     }
+    
     if (!query.trim()) {
       alert('Silakan masukkan pertanyaan Anda!');
       return;
     }
-
+  
     setIsLoading(true);
     setAnswer('');
     setStatus('Mengirim permintaan...');
@@ -63,7 +71,12 @@ function App() {
     if (selectedFile) {
       formData.append('file', selectedFile); 
     }
-    formData.append('link', link);
+
+    if (arrayLink && arrayLink.length > 0) {
+      formData.append('link', JSON.stringify(arrayLink));
+    } else {
+      formData.append('link', link);
+    }
 
     try {
       const response = await fetch('http://localhost:8000/api/chat', {
@@ -103,7 +116,7 @@ function App() {
                 setAnswer("Rate limit reached. Please try again later.");
               } else {
                 setStatus(parsedData.status || "Error!");
-                setAnswer(parsedData.error);
+                setAnswer("Terjadi masalah pada server");
               }
             } else {
               if (parsedData.status) {
@@ -112,6 +125,10 @@ function App() {
               if (parsedData.message) {
                 setAnswer((prev) => prev + parsedData.message);
                 setStatus('');
+              }
+              if (parsedData.status && parsedData.message) {
+                setStatus(parsedData.status);
+                setAnswer(parsedData.message);
               }
             }
           } catch (err) {
